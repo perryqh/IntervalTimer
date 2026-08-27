@@ -1,0 +1,230 @@
+package com.perry.intervaltimer.timer
+
+import android.os.SystemClock
+import com.perry.intervaltimer.data.IntervalType
+import com.perry.intervaltimer.data.TimerSettings
+import com.perry.intervaltimer.data.WorkoutEntity
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+
+/**
+ * Application-scoped, drift-resistant countdown engine. Runs entirely on [SystemClock.elapsedRealtime]
+ * (monotonic, survives wall-clock changes and screen-off) rather than accumulating tick durations,
+ * so a slow tick loop or a paused CPU never causes the displayed time to drift from real time.
+ *
+ * Owns no Android UI/service state — [com.perry.intervaltimer.timer.TimerService] observes
+ * [uiState] and [cueEvents] and is responsible for the foreground notification and audio/vibration.
+ */
+class TimerEngine(private val scope: CoroutineScope) {
+
+    private val _uiState = MutableStateFlow(TimerUiState())
+    val uiState: StateFlow<TimerUiState> = _uiState.asStateFlow()
+
+    private val _cueEvents = MutableSharedFlow<CueEvent>(extraBufferCapacity = 8)
+    val cueEvents: SharedFlow<CueEvent> = _cueEvents.asSharedFlow()
+
+    private var tickJob: Job? = null
+    private var settings: TimerSettings = TimerSettings()
+    private var steps: List<RunnableStep> = emptyList()
+    private var currentIndex = 0
+    private var workoutName: String = ""
+    private var totalWorkoutSeconds: Int = 0
+
+    private var phaseStartAtElapsedMs = 0L
+    private var phaseDurationMs = 0L
+    private var pausedRemainingMs: Long? = null
+    private var lastAnnouncedSecond = Int.MIN_VALUE
+
+    private data class RunnableStep(
+        val label: String,
+        val type: IntervalType,
+        val durationSeconds: Int,
+        /** 1-based round number for body steps, 0 for prepare/warmup/cooldown. */
+        val roundNumber: Int,
+        val totalRounds: Int
+    )
+
+    fun start(workout: WorkoutEntity, settings: TimerSettings) {
+        tickJob?.cancel()
+        this.settings = settings
+        this.steps = buildSteps(workout, settings)
+        this.workoutName = workout.name
+        this.totalWorkoutSeconds = steps.sumOf { it.durationSeconds }
+        this.currentIndex = 0
+
+        if (steps.isEmpty()) {
+            _uiState.value = TimerUiState()
+            return
+        }
+
+        beginStep(announce = true)
+        tickJob = scope.launch {
+            while (isActive) {
+                tick()
+                delay(TICK_INTERVAL_MS)
+            }
+        }
+    }
+
+    fun pause() {
+        if (pausedRemainingMs != null || steps.isEmpty()) return
+        pausedRemainingMs = remainingMsNow()
+        _uiState.update { it.copy(isRunning = false) }
+    }
+
+    fun resume() {
+        val remaining = pausedRemainingMs ?: return
+        phaseStartAtElapsedMs = SystemClock.elapsedRealtime()
+        phaseDurationMs = remaining
+        pausedRemainingMs = null
+        _uiState.update { it.copy(isRunning = true) }
+    }
+
+    fun skipToNext() {
+        if (steps.isEmpty()) return
+        val wasPaused = pausedRemainingMs != null
+        advance()
+        // advance() -> beginStep() always starts the new phase running; if the user had paused,
+        // re-pause immediately so Skip doesn't silently resume the workout. Skip past the last
+        // step ends the run (finish()), where "paused" no longer has meaning, so don't re-pause then.
+        if (wasPaused && currentIndex < steps.size) {
+            pause()
+        }
+    }
+
+    fun stop() {
+        tickJob?.cancel()
+        tickJob = null
+        steps = emptyList()
+        currentIndex = 0
+        pausedRemainingMs = null
+        _uiState.value = TimerUiState()
+    }
+
+    private fun buildSteps(workout: WorkoutEntity, settings: TimerSettings): List<RunnableStep> {
+        val list = mutableListOf<RunnableStep>()
+        if (settings.prepareSeconds > 0) {
+            list += RunnableStep(IntervalType.PREPARE.label, IntervalType.PREPARE, settings.prepareSeconds, 0, 0)
+        }
+        if (workout.warmupSeconds > 0) {
+            list += RunnableStep(IntervalType.WARMUP.label, IntervalType.WARMUP, workout.warmupSeconds, 0, 0)
+        }
+        if (workout.steps.isNotEmpty()) {
+            for (round in 1..workout.rounds) {
+                for (step in workout.steps) {
+                    list += RunnableStep(step.label, step.type, step.durationSeconds, round, workout.rounds)
+                }
+            }
+        }
+        if (workout.cooldownSeconds > 0) {
+            list += RunnableStep(IntervalType.COOLDOWN.label, IntervalType.COOLDOWN, workout.cooldownSeconds, 0, 0)
+        }
+        return list
+    }
+
+    private fun beginStep(announce: Boolean) {
+        val step = steps[currentIndex]
+        phaseStartAtElapsedMs = SystemClock.elapsedRealtime()
+        phaseDurationMs = step.durationSeconds * 1000L
+        pausedRemainingMs = null
+        lastAnnouncedSecond = Int.MIN_VALUE
+        publishState()
+        if (announce) {
+            _cueEvents.tryEmit(CueEvent.PhaseChange(step.type))
+        }
+    }
+
+    private fun tick() {
+        if (steps.isEmpty() || pausedRemainingMs != null) return
+        publishState()
+
+        val remainingSeconds = ceilSeconds(remainingMsNow())
+        if (remainingSeconds != lastAnnouncedSecond) {
+            lastAnnouncedSecond = remainingSeconds
+            if (remainingSeconds in 1..settings.countdownLeadSeconds) {
+                _cueEvents.tryEmit(CueEvent.Tick(remainingSeconds))
+            }
+        }
+
+        if (remainingMsNow() <= 0L) {
+            advance()
+        }
+    }
+
+    private fun advance() {
+        currentIndex++
+        if (currentIndex >= steps.size) {
+            finish()
+        } else {
+            beginStep(announce = true)
+        }
+    }
+
+    private fun finish() {
+        tickJob?.cancel()
+        tickJob = null
+        _uiState.update {
+            it.copy(
+                isRunning = false,
+                isFinished = true,
+                remainingSeconds = 0,
+                isCountdownWindow = false
+            )
+        }
+        _cueEvents.tryEmit(CueEvent.Finished)
+    }
+
+    private fun remainingMsNow(): Long {
+        val remaining = pausedRemainingMs
+        if (remaining != null) return remaining
+        val elapsed = SystemClock.elapsedRealtime() - phaseStartAtElapsedMs
+        return (phaseDurationMs - elapsed).coerceAtLeast(0L)
+    }
+
+    private fun publishState() {
+        val step = steps.getOrNull(currentIndex) ?: return
+        val remainingMs = remainingMsNow()
+        val remainingSeconds = ceilSeconds(remainingMs)
+        val next = steps.getOrNull(currentIndex + 1)
+        val elapsedBefore = steps.take(currentIndex).sumOf { it.durationSeconds }
+        val elapsedInStep = (step.durationSeconds - remainingSeconds).coerceAtLeast(0)
+
+        _uiState.update {
+            it.copy(
+                isActive = true,
+                isRunning = pausedRemainingMs == null,
+                isFinished = false,
+                workoutName = workoutName,
+                currentStepLabel = step.label,
+                currentStepType = step.type,
+                remainingSeconds = remainingSeconds,
+                currentStepTotalSeconds = step.durationSeconds,
+                stepIndex = currentIndex,
+                totalSteps = steps.size,
+                roundNumber = step.roundNumber.coerceAtLeast(1),
+                totalRounds = step.totalRounds.coerceAtLeast(1),
+                nextStepLabel = next?.label,
+                nextStepType = next?.type,
+                isCountdownWindow = remainingSeconds in 1..settings.countdownLeadSeconds,
+                elapsedTotalSeconds = elapsedBefore + elapsedInStep,
+                totalWorkoutSeconds = totalWorkoutSeconds
+            )
+        }
+    }
+
+    private fun ceilSeconds(millis: Long): Int = ((millis + 999L) / 1000L).toInt()
+
+    companion object {
+        private const val TICK_INTERVAL_MS = 100L
+    }
+}

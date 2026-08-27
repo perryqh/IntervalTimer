@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Interval Timer</string>
+    <string name="notification_channel_name">Workout timer</string>
+    <string name="notification_channel_description">Shows the current interval while a workout is running</string>
+</resources>

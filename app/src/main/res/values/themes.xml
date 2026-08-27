@@ -1,0 +1,7 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- Manifest-level theme, shown briefly before Compose content is set. Real theming lives in ui/theme/Theme.kt -->
+    <style name="Theme.IntervalTimer" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="android:statusBarColor" tools:targetApi="l">@color/launcher_background</item>
+        <item name="android:windowBackground">@color/launcher_background</item>
+    </style>
+</resources>
