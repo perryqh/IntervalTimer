@@ -18,14 +18,20 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 /**
- * Application-scoped, drift-resistant countdown engine. Runs entirely on [SystemClock.elapsedRealtime]
+ * Application-scoped, drift-resistant countdown engine. Runs entirely on [elapsedRealtimeMs]
  * (monotonic, survives wall-clock changes and screen-off) rather than accumulating tick durations,
  * so a slow tick loop or a paused CPU never causes the displayed time to drift from real time.
+ * [elapsedRealtimeMs] defaults to [SystemClock.elapsedRealtime] and is only overridden in tests,
+ * where it's wired to a [kotlinx.coroutines.test.TestCoroutineScheduler]'s virtual clock so the
+ * tick loop's `delay()` calls and "elapsed time" stay in lockstep without real waiting.
  *
  * Owns no Android UI/service state — [com.perry.intervaltimer.timer.TimerService] observes
  * [uiState] and [cueEvents] and is responsible for the foreground notification and audio/vibration.
  */
-class TimerEngine(private val scope: CoroutineScope) {
+class TimerEngine(
+    private val scope: CoroutineScope,
+    private val elapsedRealtimeMs: () -> Long = { SystemClock.elapsedRealtime() }
+) {
 
     private val _uiState = MutableStateFlow(TimerUiState())
     val uiState: StateFlow<TimerUiState> = _uiState.asStateFlow()
@@ -84,7 +90,7 @@ class TimerEngine(private val scope: CoroutineScope) {
 
     fun resume() {
         val remaining = pausedRemainingMs ?: return
-        phaseStartAtElapsedMs = SystemClock.elapsedRealtime()
+        phaseStartAtElapsedMs = elapsedRealtimeMs()
         phaseDurationMs = remaining
         pausedRemainingMs = null
         _uiState.update { it.copy(isRunning = true) }
@@ -134,7 +140,7 @@ class TimerEngine(private val scope: CoroutineScope) {
 
     private fun beginStep(announce: Boolean) {
         val step = steps[currentIndex]
-        phaseStartAtElapsedMs = SystemClock.elapsedRealtime()
+        phaseStartAtElapsedMs = elapsedRealtimeMs()
         phaseDurationMs = step.durationSeconds * 1000L
         pausedRemainingMs = null
         lastAnnouncedSecond = Int.MIN_VALUE
@@ -206,7 +212,7 @@ class TimerEngine(private val scope: CoroutineScope) {
     private fun remainingMsNow(): Long {
         val remaining = pausedRemainingMs
         if (remaining != null) return remaining
-        val elapsed = SystemClock.elapsedRealtime() - phaseStartAtElapsedMs
+        val elapsed = elapsedRealtimeMs() - phaseStartAtElapsedMs
         return (phaseDurationMs - elapsed).coerceAtLeast(0L)
     }
 
