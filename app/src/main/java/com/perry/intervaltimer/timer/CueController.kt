@@ -19,13 +19,12 @@ import kotlin.math.pow
 import kotlin.math.sin
 
 /**
- * Turns [CueEvent]s into beeps/voice + vibration pulses. Beeps use [ToneGenerator] instead of
- * bundled audio assets — no sound files to ship, and it respects the ringer/media volume the
- * user already has set. The voice countdown is the one exception: it plays recorded clips from
- * res/raw (via [SoundPool]) — count_<n> for the tick countdown, phase_<type> for phase changes
- * (e.g. phase_work.m4a) — looked up by name at runtime so the app builds and runs fine even
- * before those files exist. Ticks fall back to the beep only within the final lead-in window;
- * everything else stays silent if its clip is missing.
+ * Turns [CueEvent]s into beeps/voice + vibration pulses. The final 1-9 lead-in countdown always
+ * uses a synthesized tick tone (never voice); the round-number milestones (10/20/.../60s
+ * remaining) and phase changes (work/rest/etc.) always try voice first. Voice clips live in
+ * res/raw (via [SoundPool]) — count_<n>, phase_<type> (e.g. phase_work.m4a) — looked up by name
+ * at runtime so the app builds and runs fine even before those files exist; a missing milestone
+ * clip stays silent, a missing phase clip falls back to a beep.
  */
 class CueController(context: Context) {
 
@@ -38,15 +37,18 @@ class CueController(context: Context) {
     private val soundPool: SoundPool = SoundPool.Builder()
         .setMaxStreams(1)
         .setAudioAttributes(
+            // USAGE_MEDIA (not USAGE_ALARM) so these mix with whatever music is playing instead of
+            // ducking/pausing it — matches the STREAM_MUSIC the beeps below already use.
             AudioAttributes.Builder()
-                .setUsage(AudioAttributes.USAGE_ALARM)
+                .setUsage(AudioAttributes.USAGE_MEDIA)
                 .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                 .build()
         )
         .build()
 
-    /** secondsRemaining -> loaded SoundPool id, or null if count_<n> wasn't found in res/raw. Covers
-     *  the final 1-5 lead-in plus round-number milestones (10/20/.../60) for long intervals. */
+    /** secondsRemaining -> loaded SoundPool id, or null if count_<n> wasn't found in res/raw. Only
+     *  covers the round-number milestones (10/20/.../60) — the final 1-9 lead-in always uses the
+     *  synthesized tick instead, never voice. */
     private val voiceSoundIds: Map<Int, Int?> = VOICE_SECONDS.associateWith { second ->
         val resId = appContext.resources.getIdentifier("count_$second", "raw", appContext.packageName)
         if (resId == 0) null else soundPool.load(appContext, resId, 1)
@@ -73,18 +75,16 @@ class CueController(context: Context) {
     fun handle(event: CueEvent, settings: TimerSettings) {
         when (event) {
             is CueEvent.Tick -> {
-                val spokeIt = settings.voiceCountdownEnabled && playVoice(event.secondsRemaining)
-                // The beep is only a fallback for the final lead-in window (historical behavior).
-                // Milestone ticks (10/20/.../60s remaining) are voice-only — no clip means no cue,
-                // rather than beeping every 10s through a long interval.
+                // Milestones (10/20/.../60) always try voice — playVoice() only has clips for those
+                // seconds, so this is a no-op for 1-9 and they always fall through to the tick tone.
+                val spokeIt = settings.soundEnabled && playVoice(event.secondsRemaining)
+                // The beep is only a fallback for the final lead-in window; milestone ticks with a
+                // missing clip stay silent rather than beeping every 10s through a long interval.
                 val inBeepFallbackWindow = event.secondsRemaining in 1..settings.countdownLeadSeconds
                 if (!spokeIt && inBeepFallbackWindow && settings.soundEnabled) beepForCountdown(event.secondsRemaining)
                 if (settings.vibrationEnabled) vibrate(longArrayOf(0, 60))
             }
             is CueEvent.PhaseChange -> {
-                // Phase announcements (work/rest/etc.) are always voiced when sound is on — unlike
-                // the numeric tick countdown, they aren't gated behind the separate "Voice countdown"
-                // setting, since knowing which phase just started matters regardless of that toggle.
                 val spokeIt = settings.soundEnabled && playPhaseVoice(event.newType)
                 if (!spokeIt && settings.soundEnabled) beep(ToneGenerator.TONE_PROP_BEEP2, 250)
                 if (settings.vibrationEnabled) vibrate(longArrayOf(0, 150, 80, 150))
@@ -132,8 +132,9 @@ class CueController(context: Context) {
         }
         val track = AudioTrack.Builder()
             .setAudioAttributes(
+                // USAGE_MEDIA, for the same reason as the SoundPool above — mix with music, don't duck it.
                 AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_ALARM)
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
                     .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
                     .build()
             )
@@ -179,6 +180,6 @@ class CueController(context: Context) {
 
     private companion object {
         const val MAX_TONE_VOLUME = 90
-        val VOICE_SECONDS = setOf(1, 2, 3, 4, 5, 10, 20, 30, 40, 50, 60)
+        val VOICE_SECONDS = setOf(10, 20, 30, 40, 50, 60)
     }
 }

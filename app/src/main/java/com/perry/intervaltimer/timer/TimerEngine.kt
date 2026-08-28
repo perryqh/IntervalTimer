@@ -163,9 +163,13 @@ class TimerEngine(private val scope: CoroutineScope) {
             // the milestones are for giving a time check partway through a long interval, not for
             // the "about to end" cue, so they ignore the lead-in setting. The
             // `remainingSeconds > countdownLeadSeconds` guard just avoids double-announcing a value
-            // (e.g. 10) that both ranges would otherwise cover.
+            // (e.g. 10) that both ranges would otherwise cover. The `remainingSeconds != stepDurationSeconds`
+            // guard skips a milestone that lands exactly on the phase's first tick (e.g. a 30s phase
+            // hitting "30" immediately) — that's already covered by the phase-change announcement.
             if (remainingSeconds in 1..effectiveLeadSeconds ||
-                (remainingSeconds in MILESTONE_SECONDS && remainingSeconds > settings.countdownLeadSeconds)
+                (remainingSeconds in MILESTONE_SECONDS &&
+                    remainingSeconds > settings.countdownLeadSeconds &&
+                    remainingSeconds != stepDurationSeconds)
             ) {
                 _cueEvents.tryEmit(CueEvent.Tick(remainingSeconds))
             }

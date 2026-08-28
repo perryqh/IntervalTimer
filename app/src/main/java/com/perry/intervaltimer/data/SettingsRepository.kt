@@ -19,8 +19,7 @@ data class TimerSettings(
     val prepareSeconds: Int = 10,
     val soundEnabled: Boolean = true,
     val vibrationEnabled: Boolean = true,
-    val keepScreenOn: Boolean = true,
-    val voiceCountdownEnabled: Boolean = false
+    val keepScreenOn: Boolean = true
 )
 
 class SettingsRepository(private val context: Context) {
@@ -31,7 +30,6 @@ class SettingsRepository(private val context: Context) {
         val SOUND_ENABLED = booleanPreferencesKey("sound_enabled")
         val VIBRATION_ENABLED = booleanPreferencesKey("vibration_enabled")
         val KEEP_SCREEN_ON = booleanPreferencesKey("keep_screen_on")
-        val VOICE_COUNTDOWN_ENABLED = booleanPreferencesKey("voice_countdown_enabled")
     }
 
     val settings: Flow<TimerSettings> = context.dataStore.data.map { prefs ->
@@ -40,8 +38,7 @@ class SettingsRepository(private val context: Context) {
             prepareSeconds = prefs[Keys.PREPARE_SECONDS] ?: 10,
             soundEnabled = prefs[Keys.SOUND_ENABLED] ?: true,
             vibrationEnabled = prefs[Keys.VIBRATION_ENABLED] ?: true,
-            keepScreenOn = prefs[Keys.KEEP_SCREEN_ON] ?: true,
-            voiceCountdownEnabled = prefs[Keys.VOICE_COUNTDOWN_ENABLED] ?: false
+            keepScreenOn = prefs[Keys.KEEP_SCREEN_ON] ?: true
         )
     }
 
@@ -63,9 +60,5 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setKeepScreenOn(value: Boolean) {
         context.dataStore.edit { it[Keys.KEEP_SCREEN_ON] = value }
-    }
-
-    suspend fun setVoiceCountdownEnabled(value: Boolean) {
-        context.dataStore.edit { it[Keys.VOICE_COUNTDOWN_ENABLED] = value }
     }
 }

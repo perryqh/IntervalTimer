@@ -90,14 +90,14 @@ fun SettingsScreen(app: IntervalTimerApp, onBack: () -> Unit) {
             ToggleRow("Keep screen on while running", settings.keepScreenOn, viewModel::setKeepScreenOn)
 
             Column {
-                ToggleRow("Voice countdown (\"5, 4, 3…\")", settings.voiceCountdownEnabled, viewModel::setVoiceCountdownEnabled)
+                Text("Voice", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "Speaks the last few seconds of each interval instead of beeping, plus time " +
-                        "checks at 60/50/40/30/20/10s remaining for longer intervals. Needs recorded " +
-                        "clips named count_60.m4a … count_1.m4a in app/src/main/res/raw — falls back " +
-                        "to the beep for the final countdown if a clip's missing, silent for the " +
-                        "longer-interval time checks. Phase announcements (\"work\"/\"rest\"/etc.) are " +
-                        "always voiced when Sound is on, regardless of this toggle.",
+                    "The last few seconds of each interval always use a short tick tone, not voice. " +
+                        "Time checks at 60/50/40/30/20/10s remaining, and phase announcements " +
+                        "(\"work\"/\"rest\"/etc.), always use voice when Sound is on — needs recorded " +
+                        "clips named count_60.m4a … count_10.m4a and phase_work.m4a/phase_rest.m4a in " +
+                        "app/src/main/res/raw. A missing time-check clip stays silent; a missing " +
+                        "phase clip falls back to a beep.",
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
                 )

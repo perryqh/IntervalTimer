@@ -1,5 +1,7 @@
 package com.perry.intervaltimer.ui.screens
 
+import android.app.Activity
+import android.content.Intent
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -11,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
@@ -29,11 +32,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.perry.intervaltimer.IntervalTimerApp
 import com.perry.intervaltimer.data.WorkoutEntity
+import com.perry.intervaltimer.timer.TimerService
 import com.perry.intervaltimer.ui.Routes
 import com.perry.intervaltimer.ui.ViewModelFactory
 import com.perry.intervaltimer.ui.components.formatSeconds
@@ -50,6 +56,7 @@ fun WorkoutListScreen(
         factory = ViewModelFactory { WorkoutListViewModel(app.workoutRepository) }
     )
     val workouts by viewModel.workouts.collectAsStateWithLifecycle()
+    val context = LocalContext.current
 
     Scaffold(
         topBar = {
@@ -58,6 +65,17 @@ fun WorkoutListScreen(
                 actions = {
                     IconButton(onClick = onOpenSettings) {
                         Icon(Icons.Filled.Settings, contentDescription = "Settings")
+                    }
+                    IconButton(onClick = {
+                        // Stop any workout still running in the background before closing, so
+                        // quitting doesn't leave the foreground service (and its cues) going.
+                        if (app.timerEngine.uiState.value.isActive) {
+                            val intent = Intent(context, TimerService::class.java).setAction(TimerService.ACTION_STOP)
+                            ContextCompat.startForegroundService(context, intent)
+                        }
+                        (context as? Activity)?.finishAndRemoveTask()
+                    }) {
+                        Icon(Icons.AutoMirrored.Filled.ExitToApp, contentDescription = "Quit")
                     }
                 }
             )
