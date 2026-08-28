@@ -19,4 +19,5 @@ class SettingsViewModel(private val repository: SettingsRepository) : ViewModel(
     fun setSoundEnabled(value: Boolean) = viewModelScope.launch { repository.setSoundEnabled(value) }
     fun setVibrationEnabled(value: Boolean) = viewModelScope.launch { repository.setVibrationEnabled(value) }
     fun setKeepScreenOn(value: Boolean) = viewModelScope.launch { repository.setKeepScreenOn(value) }
+    fun setVoiceCountdownEnabled(value: Boolean) = viewModelScope.launch { repository.setVoiceCountdownEnabled(value) }
 }

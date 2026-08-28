@@ -88,6 +88,20 @@ fun SettingsScreen(app: IntervalTimerApp, onBack: () -> Unit) {
             ToggleRow("Sound", settings.soundEnabled, viewModel::setSoundEnabled)
             ToggleRow("Vibration", settings.vibrationEnabled, viewModel::setVibrationEnabled)
             ToggleRow("Keep screen on while running", settings.keepScreenOn, viewModel::setKeepScreenOn)
+
+            Column {
+                ToggleRow("Voice countdown (\"5, 4, 3…\")", settings.voiceCountdownEnabled, viewModel::setVoiceCountdownEnabled)
+                Text(
+                    "Speaks the last few seconds of each interval instead of beeping, plus time " +
+                        "checks at 60/50/40/30/20/10s remaining for longer intervals. Needs recorded " +
+                        "clips named count_60.m4a … count_1.m4a in app/src/main/res/raw — falls back " +
+                        "to the beep for the final countdown if a clip's missing, silent for the " +
+                        "longer-interval time checks. Phase announcements (\"work\"/\"rest\"/etc.) are " +
+                        "always voiced when Sound is on, regardless of this toggle.",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                )
+            }
         }
     }
 }

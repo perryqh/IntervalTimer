@@ -151,7 +151,22 @@ class TimerEngine(private val scope: CoroutineScope) {
         val remainingSeconds = ceilSeconds(remainingMsNow())
         if (remainingSeconds != lastAnnouncedSecond) {
             lastAnnouncedSecond = remainingSeconds
-            if (remainingSeconds in 1..settings.countdownLeadSeconds) {
+            // A 5-second lead-in on an 8-second phase eats most of it, so short phases (<=10s) cap
+            // the lead-in at 3s — unless the user's own setting is already lower than that.
+            val stepDurationSeconds = steps[currentIndex].durationSeconds
+            val effectiveLeadSeconds = if (stepDurationSeconds <= 10) {
+                minOf(settings.countdownLeadSeconds, 3)
+            } else {
+                settings.countdownLeadSeconds
+            }
+            // Final lead-in window and the round-number milestones are announced independently —
+            // the milestones are for giving a time check partway through a long interval, not for
+            // the "about to end" cue, so they ignore the lead-in setting. The
+            // `remainingSeconds > countdownLeadSeconds` guard just avoids double-announcing a value
+            // (e.g. 10) that both ranges would otherwise cover.
+            if (remainingSeconds in 1..effectiveLeadSeconds ||
+                (remainingSeconds in MILESTONE_SECONDS && remainingSeconds > settings.countdownLeadSeconds)
+            ) {
                 _cueEvents.tryEmit(CueEvent.Tick(remainingSeconds))
             }
         }
@@ -226,5 +241,6 @@ class TimerEngine(private val scope: CoroutineScope) {
 
     companion object {
         private const val TICK_INTERVAL_MS = 100L
+        private val MILESTONE_SECONDS = setOf(10, 20, 30, 40, 50, 60)
     }
 }
