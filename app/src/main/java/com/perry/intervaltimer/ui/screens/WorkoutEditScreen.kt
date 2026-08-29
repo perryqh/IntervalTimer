@@ -34,6 +34,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
@@ -48,7 +49,7 @@ import com.perry.intervaltimer.ui.ViewModelFactory
 import com.perry.intervaltimer.ui.components.StepperRow
 import com.perry.intervaltimer.ui.theme.phaseColor
 
-private val editableTypes = listOf(IntervalType.WARMUP, IntervalType.WORK, IntervalType.REST, IntervalType.COOLDOWN)
+private val editableTypes = listOf(IntervalType.WORK, IntervalType.REST)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -214,9 +215,15 @@ private fun StepEditor(
                     label = { Text("Label") },
                     modifier = Modifier.weight(1f)
                 )
+                var durationText by rememberSaveable(step.id) { mutableStateOf(step.durationSeconds.toString()) }
                 OutlinedTextField(
-                    value = step.durationSeconds.toString(),
-                    onValueChange = { text -> text.toIntOrNull()?.let(onDurationChange) },
+                    value = durationText,
+                    onValueChange = { text ->
+                        if (text.isEmpty() || text.all { it.isDigit() }) {
+                            durationText = text
+                            text.toIntOrNull()?.let(onDurationChange)
+                        }
+                    },
                     label = { Text("Seconds") },
                     keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Number),
                     modifier = Modifier.weight(1f)

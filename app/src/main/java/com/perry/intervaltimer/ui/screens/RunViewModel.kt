@@ -18,7 +18,11 @@ class RunViewModel(
     val uiState: StateFlow<TimerUiState> = engine.uiState
 
     init {
-        sendAction(TimerService.ACTION_START, workoutId)
+        val state = engine.uiState.value
+        val alreadyThisWorkout = state.isActive && !state.isFinished && state.workoutId == workoutId
+        if (!alreadyThisWorkout) {
+            sendAction(TimerService.ACTION_START, workoutId)
+        }
     }
 
     fun pause() = sendAction(TimerService.ACTION_PAUSE)

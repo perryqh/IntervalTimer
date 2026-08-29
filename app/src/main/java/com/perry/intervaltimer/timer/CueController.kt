@@ -13,6 +13,7 @@ import android.os.Looper
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import com.perry.intervaltimer.R
 import com.perry.intervaltimer.data.IntervalType
 import com.perry.intervaltimer.data.TimerSettings
 import kotlin.math.pow
@@ -21,14 +22,14 @@ import kotlin.math.sin
 /**
  * Turns [CueEvent]s into beeps/voice + vibration pulses. The final 1-9 lead-in countdown always
  * uses a synthesized tick tone (never voice); the round-number milestones (10/20/.../60s
- * remaining) and phase changes (work/rest/etc.) always try voice first. Voice clips live in
- * res/raw (via [SoundPool]) — count_<n>, phase_<type> (e.g. phase_work.m4a) — looked up by name
- * at runtime so the app builds and runs fine even before those files exist; a missing milestone
- * clip stays silent, a missing phase clip falls back to a beep.
+ * remaining) and phase changes (work/rest) always try voice first. A missing milestone clip stays
+ * silent; a missing phase clip falls back to a beep.
  */
 class CueController(context: Context) {
 
     private val appContext = context.applicationContext
+
+    @Volatile private var released = false
 
     private val toneGenerator: ToneGenerator? = runCatching {
         ToneGenerator(AudioManager.STREAM_MUSIC, MAX_TONE_VOLUME)
@@ -46,21 +47,22 @@ class CueController(context: Context) {
         )
         .build()
 
-    /** secondsRemaining -> loaded SoundPool id, or null if count_<n> wasn't found in res/raw. Only
-     *  covers the round-number milestones (10/20/.../60) — the final 1-9 lead-in always uses the
-     *  synthesized tick instead, never voice. */
-    private val voiceSoundIds: Map<Int, Int?> = VOICE_SECONDS.associateWith { second ->
-        val resId = appContext.resources.getIdentifier("count_$second", "raw", appContext.packageName)
-        if (resId == 0) null else soundPool.load(appContext, resId, 1)
-    }
+    private val voiceSoundIds: Map<Int, Int> = mapOf(
+        10 to R.raw.count_10,
+        20 to R.raw.count_20,
+        30 to R.raw.count_30,
+        40 to R.raw.count_40,
+        50 to R.raw.count_50,
+        60 to R.raw.count_60
+    ).mapValues { (_, resId) -> soundPool.load(appContext, resId, 1) }
 
-    /** newType -> loaded SoundPool id, or null if phase_<type> wasn't found in res/raw. */
-    private val phaseSoundIds: Map<IntervalType, Int?> = IntervalType.entries.associateWith { type ->
-        val resId = appContext.resources.getIdentifier("phase_${type.name.lowercase()}", "raw", appContext.packageName)
-        if (resId == 0) null else soundPool.load(appContext, resId, 1)
-    }
+    private val phaseSoundIds: Map<IntervalType, Int> = mapOf(
+        IntervalType.WORK to R.raw.phase_work,
+        IntervalType.REST to R.raw.phase_rest
+    ).mapValues { (_, resId) -> soundPool.load(appContext, resId, 1) }
 
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val activeTracks = mutableListOf<AudioTrack>()
 
     private val vibrator: Vibrator? by lazy {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -73,16 +75,13 @@ class CueController(context: Context) {
     }
 
     fun handle(event: CueEvent, settings: TimerSettings) {
+        if (released) return
         when (event) {
             is CueEvent.Tick -> {
-                // Milestones (10/20/.../60) always try voice — playVoice() only has clips for those
-                // seconds, so this is a no-op for 1-9 and they always fall through to the tick tone.
                 val spokeIt = settings.soundEnabled && playVoice(event.secondsRemaining)
-                // The beep is only a fallback for the final lead-in window; milestone ticks with a
-                // missing clip stay silent rather than beeping every 10s through a long interval.
-                val inBeepFallbackWindow = event.secondsRemaining in 1..settings.countdownLeadSeconds
-                if (!spokeIt && inBeepFallbackWindow && settings.soundEnabled) beepForCountdown(event.secondsRemaining)
-                if (settings.vibrationEnabled) vibrate(longArrayOf(0, 60))
+                val inLeadInWindow = event.secondsRemaining in 1..settings.countdownLeadSeconds
+                if (!spokeIt && inLeadInWindow && settings.soundEnabled) beepForCountdown(event.secondsRemaining)
+                if (settings.vibrationEnabled && inLeadInWindow) vibrate(longArrayOf(0, 60))
             }
             is CueEvent.PhaseChange -> {
                 val spokeIt = settings.soundEnabled && playPhaseVoice(event.newType)
@@ -97,6 +96,7 @@ class CueController(context: Context) {
     }
 
     private fun beep(tone: Int, durationMs: Int) {
+        if (released) return
         toneGenerator?.startTone(tone, durationMs)
     }
 
@@ -118,6 +118,7 @@ class CueController(context: Context) {
 
     /** Short, soft sine-wave beep with a fade-in/out envelope so it doesn't click or sound harsh. */
     private fun playSineTick(frequencyHz: Double, durationMs: Int = 90, volume: Float = 0.35f) {
+        if (released) return
         val sampleRate = 44100
         val numSamples = durationMs * sampleRate / 1000
         val fadeSamples = (numSamples / 8).coerceAtLeast(1)
@@ -132,7 +133,6 @@ class CueController(context: Context) {
         }
         val track = AudioTrack.Builder()
             .setAudioAttributes(
-                // USAGE_MEDIA, for the same reason as the SoundPool above — mix with music, don't duck it.
                 AudioAttributes.Builder()
                     .setUsage(AudioAttributes.USAGE_MEDIA)
                     .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
@@ -148,20 +148,24 @@ class CueController(context: Context) {
             .setBufferSizeInBytes(buffer.size * 2)
             .setTransferMode(AudioTrack.MODE_STATIC)
             .build()
+        synchronized(activeTracks) { activeTracks += track }
         track.write(buffer, 0, buffer.size)
         track.play()
-        mainHandler.postDelayed({ track.release() }, durationMs + 50L)
+        mainHandler.postDelayed({
+            runCatching { track.release() }
+            synchronized(activeTracks) { activeTracks.remove(track) }
+        }, durationMs + 50L)
     }
 
-    /** Returns true if a count_<secondsRemaining> clip was found and played. */
     private fun playVoice(secondsRemaining: Int): Boolean {
+        if (released) return false
         val soundId = voiceSoundIds[secondsRemaining] ?: return false
         soundPool.play(soundId, 1f, 1f, 1, 0, 1f)
         return true
     }
 
-    /** Returns true if a phase_<type> clip was found and played. */
     private fun playPhaseVoice(type: IntervalType): Boolean {
+        if (released) return false
         val soundId = phaseSoundIds[type] ?: return false
         soundPool.play(soundId, 1f, 1f, 1, 0, 1f)
         return true
@@ -174,12 +178,17 @@ class CueController(context: Context) {
     }
 
     fun release() {
+        released = true
+        mainHandler.removeCallbacksAndMessages(null)
+        synchronized(activeTracks) {
+            activeTracks.forEach { runCatching { it.release() } }
+            activeTracks.clear()
+        }
         toneGenerator?.release()
         soundPool.release()
     }
 
     private companion object {
         const val MAX_TONE_VOLUME = 90
-        val VOICE_SECONDS = setOf(10, 20, 30, 40, 50, 60)
     }
 }

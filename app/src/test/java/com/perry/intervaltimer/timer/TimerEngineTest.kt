@@ -149,4 +149,76 @@ class TimerEngineTest {
         val phaseTypes = events.filterIsInstance<CueEvent.PhaseChange>().map { it.newType }
         assertEquals(listOf(IntervalType.WORK, IntervalType.REST), phaseTypes)
     }
+
+    @Test
+    fun `skip while paused stays paused on the next step`() = runTest {
+        val engine = newEngine()
+        engine.start(
+            workout(step(IntervalType.WORK, 30), step(IntervalType.REST, 20)),
+            TimerSettings(countdownLeadSeconds = 0, prepareSeconds = 0)
+        )
+        run(2_000)
+        engine.pause()
+
+        engine.skipToNext()
+        runCurrent()
+
+        assertEquals(IntervalType.REST, engine.uiState.value.currentStepType)
+        assertEquals(20, engine.uiState.value.remainingSeconds)
+        assertFalse(engine.uiState.value.isRunning)
+
+        run(5_000)
+        assertEquals(20, engine.uiState.value.remainingSeconds)
+        assertFalse(engine.uiState.value.isRunning)
+    }
+
+    @Test
+    fun `empty step list does not start`() = runTest {
+        val engine = newEngine()
+        engine.start(
+            WorkoutEntity(name = "Empty", steps = emptyList()),
+            TimerSettings(countdownLeadSeconds = 0, prepareSeconds = 0)
+        )
+        assertFalse(engine.uiState.value.isActive)
+        assertEquals("", engine.uiState.value.workoutId)
+    }
+
+    @Test
+    fun `warmup rounds and cooldown flatten in order`() = runTest {
+        val engine = newEngine()
+        val events = collectEvents(engine)
+        val workout = WorkoutEntity(
+            name = "Flatten",
+            warmupSeconds = 2,
+            steps = listOf(step(IntervalType.WORK, 2)),
+            rounds = 2,
+            cooldownSeconds = 2
+        )
+        engine.start(workout, TimerSettings(countdownLeadSeconds = 0, prepareSeconds = 0))
+        assertEquals(workout.id, engine.uiState.value.workoutId)
+
+        run(10_000)
+
+        val phaseTypes = events.filterIsInstance<CueEvent.PhaseChange>().map { it.newType }
+        assertEquals(
+            listOf(IntervalType.WARMUP, IntervalType.WORK, IntervalType.WORK, IntervalType.COOLDOWN),
+            phaseTypes
+        )
+        assertTrue(engine.uiState.value.isFinished)
+        assertEquals(workout.id, engine.uiState.value.workoutId)
+    }
+
+    @Test
+    fun `pause and skip are no-ops after finish`() = runTest {
+        val engine = newEngine()
+        engine.start(workout(step(IntervalType.WORK, 2)), TimerSettings(countdownLeadSeconds = 0, prepareSeconds = 0))
+        run(3_000)
+        assertTrue(engine.uiState.value.isFinished)
+
+        engine.pause()
+        engine.skipToNext()
+        engine.resume()
+        assertTrue(engine.uiState.value.isFinished)
+        assertFalse(engine.uiState.value.isRunning)
+    }
 }
