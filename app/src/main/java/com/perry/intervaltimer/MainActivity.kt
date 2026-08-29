@@ -1,21 +1,27 @@
 package com.perry.intervaltimer
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import androidx.navigation.NavHostController
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
-import androidx.navigation.NavType
+import com.perry.intervaltimer.timer.TimerService
 import com.perry.intervaltimer.ui.Routes
 import com.perry.intervaltimer.ui.screens.RunScreen
 import com.perry.intervaltimer.ui.screens.SettingsScreen
@@ -29,8 +35,12 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.RequestPermission()
     ) { /* If denied, the workout still runs; the notification (and its controls) just won't show. */ }
 
+    private var pendingRunWorkoutId by mutableStateOf<String?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
+        pendingRunWorkoutId = intent.getStringExtra(TimerService.EXTRA_WORKOUT_ID)
         val app = IntervalTimerApp.from(this)
 
         setContent {
@@ -45,9 +55,23 @@ class MainActivity : ComponentActivity() {
                 }
 
                 val navController = rememberNavController()
+                LaunchedEffect(pendingRunWorkoutId) {
+                    val id = pendingRunWorkoutId ?: return@LaunchedEffect
+                    navController.navigate(Routes.runWorkout(id)) {
+                        launchSingleTop = true
+                        popUpTo(Routes.WORKOUT_LIST)
+                    }
+                    pendingRunWorkoutId = null
+                }
                 AppNavHost(navController, app)
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        pendingRunWorkoutId = intent.getStringExtra(TimerService.EXTRA_WORKOUT_ID)
     }
 }
 

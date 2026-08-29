@@ -6,17 +6,20 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
 import android.os.IBinder
+import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import com.perry.intervaltimer.IntervalTimerApp
 import com.perry.intervaltimer.MainActivity
 import com.perry.intervaltimer.R
 import com.perry.intervaltimer.data.TimerSettings
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
@@ -31,20 +34,23 @@ import kotlinx.coroutines.launch
 class TimerService : Service() {
 
     private val serviceJob = SupervisorJob()
-    private val serviceScope = CoroutineScope(serviceJob)
+    private val serviceScope = CoroutineScope(serviceJob + Dispatchers.Main.immediate)
 
     private lateinit var app: IntervalTimerApp
     private lateinit var cueController: CueController
     private lateinit var notificationManager: NotificationManager
+    private lateinit var powerManager: PowerManager
 
     @Volatile private var latestSettings: TimerSettings = TimerSettings()
     private var autoStopJob: Job? = null
+    private var wakeLock: PowerManager.WakeLock? = null
 
     override fun onCreate() {
         super.onCreate()
         app = IntervalTimerApp.from(this)
         cueController = CueController(this)
         notificationManager = getSystemService(NotificationManager::class.java)
+        powerManager = getSystemService(PowerManager::class.java)
         createNotificationChannel()
 
         app.settingsRepository.settings
@@ -74,23 +80,46 @@ class TimerService : Service() {
 
         when (intent?.action) {
             ACTION_START -> {
+                autoStopJob?.cancel()
+                autoStopJob = null
                 val workoutId = intent.getStringExtra(EXTRA_WORKOUT_ID)
-                if (workoutId != null) {
+                if (workoutId == null) {
+                    stopForegroundAndSelf()
+                } else {
                     serviceScope.launch {
-                        val workout = app.workoutRepository.getWorkout(workoutId) ?: return@launch
-                        val settings = latestSettings
+                        val workout = app.workoutRepository.getWorkout(workoutId)
+                        if (workout == null) {
+                            stopForegroundAndSelf()
+                            return@launch
+                        }
+                        val settings = app.settingsRepository.settings.first()
+                        latestSettings = settings
                         app.timerEngine.start(workout, settings)
+                        if (!app.timerEngine.uiState.value.isActive) {
+                            stopForegroundAndSelf()
+                            return@launch
+                        }
                         app.workoutRepository.markUsed(workoutId)
                     }
                 }
             }
-            ACTION_PAUSE -> app.timerEngine.pause()
-            ACTION_RESUME -> app.timerEngine.resume()
-            ACTION_SKIP -> app.timerEngine.skipToNext()
+            ACTION_PAUSE -> {
+                autoStopJob?.cancel()
+                app.timerEngine.pause()
+            }
+            ACTION_RESUME -> {
+                autoStopJob?.cancel()
+                app.timerEngine.resume()
+            }
+            ACTION_SKIP -> {
+                autoStopJob?.cancel()
+                app.timerEngine.skipToNext()
+            }
             ACTION_STOP -> {
+                autoStopJob?.cancel()
+                autoStopJob = null
                 app.timerEngine.stop()
-                stopForeground(STOP_FOREGROUND_REMOVE)
-                stopSelf()
+                stopForegroundAndSelf()
             }
         }
         return START_NOT_STICKY
@@ -102,14 +131,14 @@ class TimerService : Service() {
     }
 
     private fun onStateSnapshot(snapshot: NotificationSnapshot) {
+        updateWakeLock(snapshot.isActive && snapshot.isRunning && !snapshot.isFinished)
         if (!snapshot.isActive) return
         if (snapshot.isFinished) {
             notificationManager.notify(NOTIFICATION_ID, buildNotification("Workout complete 🎉", running = false, finished = true))
             autoStopJob?.cancel()
             autoStopJob = serviceScope.launch {
                 delay(4000)
-                stopForeground(STOP_FOREGROUND_REMOVE)
-                stopSelf()
+                stopForegroundAndSelf()
             }
             return
         }
@@ -118,19 +147,13 @@ class TimerService : Service() {
     }
 
     private fun buildNotification(text: String, running: Boolean, finished: Boolean = false): android.app.Notification {
-        val contentIntent = PendingIntent.getActivity(
-            this, 0,
-            Intent(this, MainActivity::class.java),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
-
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(getString(R.string.app_name))
             .setContentText(text)
             .setOnlyAlertOnce(true)
             .setOngoing(!finished)
-            .setContentIntent(contentIntent)
+            .setContentIntent(contentIntent())
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setCategory(NotificationCompat.CATEGORY_STOPWATCH)
 
@@ -145,6 +168,20 @@ class TimerService : Service() {
         }
 
         return builder.build()
+    }
+
+    private fun contentIntent(): PendingIntent {
+        val workoutId = app.timerEngine.uiState.value.workoutId
+        val intent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                Intent.FLAG_ACTIVITY_NEW_TASK
+            if (workoutId.isNotBlank()) putExtra(EXTRA_WORKOUT_ID, workoutId)
+        }
+        return PendingIntent.getActivity(
+            this, 0, intent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
     }
 
     private fun actionIntent(action: String): PendingIntent {
@@ -167,9 +204,36 @@ class TimerService : Service() {
         notificationManager.createNotificationChannel(channel)
     }
 
+    private fun updateWakeLock(running: Boolean) {
+        if (running) {
+            val lock = wakeLock ?: powerManager.newWakeLock(
+                PowerManager.PARTIAL_WAKE_LOCK,
+                WAKE_LOCK_TAG
+            ).also {
+                it.setReferenceCounted(false)
+                wakeLock = it
+            }
+            if (!lock.isHeld) lock.acquire(WAKE_LOCK_TIMEOUT_MS)
+        } else {
+            releaseWakeLock()
+        }
+    }
+
+    private fun releaseWakeLock() {
+        val lock = wakeLock ?: return
+        if (lock.isHeld) lock.release()
+    }
+
+    private fun stopForegroundAndSelf() {
+        releaseWakeLock()
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
+    }
+
     override fun onDestroy() {
-        cueController.release()
         serviceScope.cancel()
+        cueController.release()
+        releaseWakeLock()
         super.onDestroy()
     }
 
@@ -193,5 +257,7 @@ class TimerService : Service() {
 
         private const val CHANNEL_ID = "workout_timer"
         private const val NOTIFICATION_ID = 42
+        private const val WAKE_LOCK_TAG = "IntervalTimer:Timer"
+        private const val WAKE_LOCK_TIMEOUT_MS = 6 * 60 * 60 * 1000L
     }
 }

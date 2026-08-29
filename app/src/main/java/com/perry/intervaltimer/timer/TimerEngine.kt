@@ -43,6 +43,7 @@ class TimerEngine(
     private var settings: TimerSettings = TimerSettings()
     private var steps: List<RunnableStep> = emptyList()
     private var currentIndex = 0
+    private var workoutId: String = ""
     private var workoutName: String = ""
     private var totalWorkoutSeconds: Int = 0
 
@@ -64,11 +65,13 @@ class TimerEngine(
         tickJob?.cancel()
         this.settings = settings
         this.steps = buildSteps(workout, settings)
+        this.workoutId = workout.id
         this.workoutName = workout.name
         this.totalWorkoutSeconds = steps.sumOf { it.durationSeconds }
         this.currentIndex = 0
 
         if (steps.isEmpty()) {
+            this.workoutId = ""
             _uiState.value = TimerUiState()
             return
         }
@@ -83,12 +86,13 @@ class TimerEngine(
     }
 
     fun pause() {
-        if (pausedRemainingMs != null || steps.isEmpty()) return
+        if (pausedRemainingMs != null || steps.isEmpty() || _uiState.value.isFinished) return
         pausedRemainingMs = remainingMsNow()
         _uiState.update { it.copy(isRunning = false) }
     }
 
     fun resume() {
+        if (_uiState.value.isFinished) return
         val remaining = pausedRemainingMs ?: return
         phaseStartAtElapsedMs = elapsedRealtimeMs()
         phaseDurationMs = remaining
@@ -97,7 +101,7 @@ class TimerEngine(
     }
 
     fun skipToNext() {
-        if (steps.isEmpty()) return
+        if (steps.isEmpty() || _uiState.value.isFinished) return
         val wasPaused = pausedRemainingMs != null
         advance()
         // advance() -> beginStep() always starts the new phase running; if the user had paused,
@@ -113,6 +117,7 @@ class TimerEngine(
         tickJob = null
         steps = emptyList()
         currentIndex = 0
+        workoutId = ""
         pausedRemainingMs = null
         _uiState.value = TimerUiState()
     }
@@ -160,11 +165,7 @@ class TimerEngine(
             // A 5-second lead-in on an 8-second phase eats most of it, so short phases (<=10s) cap
             // the lead-in at 3s — unless the user's own setting is already lower than that.
             val stepDurationSeconds = steps[currentIndex].durationSeconds
-            val effectiveLeadSeconds = if (stepDurationSeconds <= 10) {
-                minOf(settings.countdownLeadSeconds, 3)
-            } else {
-                settings.countdownLeadSeconds
-            }
+            val effectiveLeadSeconds = effectiveLeadSeconds(stepDurationSeconds)
             // Final lead-in window and the round-number milestones are announced independently —
             // the milestones are for giving a time check partway through a long interval, not for
             // the "about to end" cue, so they ignore the lead-in setting. The
@@ -229,6 +230,7 @@ class TimerEngine(
                 isActive = true,
                 isRunning = pausedRemainingMs == null,
                 isFinished = false,
+                workoutId = workoutId,
                 workoutName = workoutName,
                 currentStepLabel = step.label,
                 currentStepType = step.type,
@@ -240,12 +242,16 @@ class TimerEngine(
                 totalRounds = step.totalRounds.coerceAtLeast(1),
                 nextStepLabel = next?.label,
                 nextStepType = next?.type,
-                isCountdownWindow = remainingSeconds in 1..settings.countdownLeadSeconds,
+                isCountdownWindow = remainingSeconds in 1..effectiveLeadSeconds(step.durationSeconds),
                 elapsedTotalSeconds = elapsedBefore + elapsedInStep,
                 totalWorkoutSeconds = totalWorkoutSeconds
             )
         }
     }
+
+    private fun effectiveLeadSeconds(stepDurationSeconds: Int): Int =
+        if (stepDurationSeconds <= 10) minOf(settings.countdownLeadSeconds, 3)
+        else settings.countdownLeadSeconds
 
     private fun ceilSeconds(millis: Long): Int = ((millis + 999L) / 1000L).toInt()
 

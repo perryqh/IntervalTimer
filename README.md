@@ -5,25 +5,19 @@ nothing phoning home. Built to do what a good interval timer app does, plus the 
 them hardcode: **how many seconds before an interval ends the countdown beeps start** is a setting,
 not a constant.
 
-## Status / how this was built
-
-This project was scaffolded and hand-written in a cloud sandbox that has no Android SDK and no
-network access to `dl.google.com` / Maven Central (both are blocked by the sandbox's egress
-allowlist), so **it has not been compiled**. Every file was written carefully and reviewed by a
-second independent pass specifically hunting for compile errors, API-version mismatches, and
-logic bugs — but "reviewed by eye" is not "verified by a compiler." Treat the first build in
-Android Studio as the real correctness check, and expect to fix at least small things (a stray
-import, a Gradle version hiccup) on that first sync.
-
 ## What's in it
 
-- **Build your own interval workouts**: optional warm-up, a set of repeating steps (Work/Rest/
-  custom labels), a round count, optional cool-down.
+- **Build your own interval workouts**: optional warm-up, a set of repeating steps (Work/Rest
+  with custom labels), a round count, optional cool-down.
 - **Configurable countdown lead-in**: Settings → "Countdown beeps start" (0–10s before each phase
   ends) and a separate "Get ready" lead-in before the workout begins.
-- **Runs in the background**: a foreground service keeps the countdown ticking, beeping (via
-  `ToneGenerator`, no bundled sound files), and vibrating with the screen off or another app open,
-  with pause/resume/skip/stop from the notification.
+- **Voice + ticks**: work/rest announcements and 10/20/…/60s time checks use recorded clips;
+  the last few seconds of a phase are a rising tick tone. Vibration is limited to the lead-in
+  window (and phase changes), not every milestone.
+- **Runs in the background**: a foreground service keeps the countdown ticking, cueing, and
+  vibrating with the screen off or another app open. Pause/resume/skip/stop from the notification,
+  which also deep-links back to the live run. A partial wake lock is held while the timer is running
+  so screen-off beeps are not skipped by Doze.
 - **No ads, no accounts, no network permission at all.**
 
 ## Project layout
@@ -31,8 +25,8 @@ import, a Gradle version hiccup) on that first sync.
 ```
 app/src/main/java/com/perry/intervaltimer/
   data/       Room entities/DAO, DataStore settings, repositories
-  timer/      TimerEngine (drift-free countdown state machine), CueController (beep/vibrate),
-              TimerService (foreground service + notification)
+  timer/      TimerEngine (drift-free countdown state machine), CueController (beep/voice/vibrate),
+              TimerService (foreground service + notification + wake lock)
   ui/         Compose screens (workout list, edit, run, settings), navigation, theme
 ```
 
@@ -50,15 +44,16 @@ Architecture notes:
 
 ## Building it
 
-You'll need [Android Studio](https://developer.android.com/studio) (Koala or newer recommended) —
+You'll need [Android Studio](https://developer.android.com/studio) (recent stable recommended) —
 it bundles the Android SDK, an emulator, and everything else. First open:
 
 1. `File → Open`, point it at this project's root folder (the one with `settings.gradle.kts`).
 2. Let Gradle sync. First sync will download the Android Gradle Plugin, Kotlin, Compose, Room, etc.
-   from Google's and Maven Central's repositories — this needs real internet access (not available
-   in the sandbox this was built in), so do this from your normal machine.
+   from Google's and Maven Central's repositories.
 3. If sync complains about a missing SDK platform, click the offered "Install missing SDK
-   package(s)" — it'll fetch API 34 automatically.
+   package(s)" — it needs API 37 to compile and targets API 35.
+
+Toolchain: **Gradle 9.5.0**, **Android Gradle Plugin 9.3.2**, **Kotlin 2.2.10**.
 
 ### Running on your phone
 
@@ -75,12 +70,15 @@ You don't need a Play Console account, a keystore, or anything about "making it 
 this — running it via USB debugging installs it permanently on your phone like any other app,
 it just won't auto-update (you'll re-run from Android Studio when you change something).
 
-### If Gradle sync fails on plugin resolution
+### Tests
 
-The `gradle/wrapper/gradle-wrapper.properties` in this project points at Gradle 8.7, which is what
-Android Gradle Plugin 8.5.2 expects. If Android Studio suggests a different (newer) AGP/Gradle
-pairing during sync, it's fine to accept — just keep them compatible with each other per Google's
-[AGP release notes](https://developer.android.com/build/releases/gradle-plugin).
+```
+./gradlew :app:testDebugUnitTest
+```
+
+`TimerEngineTest` drives the countdown on virtual time (no real waiting) and covers cue-emission
+rules, pause/resume, skip (including skip-while-paused), empty workouts, and warmup/rounds/cooldown
+flattening.
 
 ## Known rough edges / things to tighten up next
 
@@ -89,10 +87,7 @@ pairing during sync, it's fine to accept — just keep them compatible with each
   longer sequences often.
 - **No workout history** — it doesn't log completed sessions anywhere. Would be a natural next
   Room table (`completed_workouts`) if you want it.
-- **No voice announcements** ("work", "rest") — just tones + vibration. `CueController` is the
-  place to add `TextToSpeech` if you want that; the `CueEvent.PhaseChange(newType)` event already
-  carries what's needed.
-- **Launcher icon** is a simple placeholder vector I drew by hand (a stopwatch glyph) — swap
+- **Launcher icon** is a simple placeholder vector (a stopwatch glyph) — swap
   `app/src/main/res/drawable/ic_launcher_foreground.xml` for something nicer whenever you feel like it.
 - The pause/skip/stop notification action icons all reuse the small status-bar icon rather than
   dedicated glyphs — cosmetic only, doesn't affect function.
@@ -103,5 +98,5 @@ pairing during sync, it's fine to accept — just keep them compatible with each
   (`phaseColor()`).
 - Changing what a "round" means or adding nested structures: `TimerEngine.buildSteps()` is the one
   place a `WorkoutEntity` gets flattened into the list the engine actually runs.
-- Different cue sounds: `timer/CueController.kt` — swap `ToneGenerator` tones or bring in real
-  audio files via `MediaPlayer`/`SoundPool` if you want something less beepy.
+- Different cue sounds: `timer/CueController.kt` — voice clips are `R.raw.count_10`…`count_60`
+  and `R.raw.phase_work` / `phase_rest`. Lead-in ticks are synthesized sine tones.

@@ -6,6 +6,7 @@ data class TimerUiState(
     val isActive: Boolean = false,
     val isRunning: Boolean = false,
     val isFinished: Boolean = false,
+    val workoutId: String = "",
     val workoutName: String = "",
     val currentStepLabel: String = "",
     val currentStepType: IntervalType = IntervalType.WORK,

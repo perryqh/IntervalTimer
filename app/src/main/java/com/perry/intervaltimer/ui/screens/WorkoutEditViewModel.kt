@@ -72,7 +72,10 @@ class WorkoutEditViewModel(
     fun removeStep(stepId: String) = _draft.update { it.copy(steps = it.steps.filterNot { s -> s.id == stepId }) }
 
     fun updateStepLabel(stepId: String, label: String) = updateStep(stepId) { it.copy(label = label) }
-    fun updateStepType(stepId: String, type: IntervalType) = updateStep(stepId) { it.copy(type = type) }
+    fun updateStepType(stepId: String, type: IntervalType) = updateStep(stepId) {
+        val label = if (it.label == it.type.label) type.label else it.label
+        it.copy(type = type, label = label)
+    }
     fun updateStepDuration(stepId: String, seconds: Int) =
         updateStep(stepId) { it.copy(durationSeconds = seconds.coerceIn(1, 3600)) }
 

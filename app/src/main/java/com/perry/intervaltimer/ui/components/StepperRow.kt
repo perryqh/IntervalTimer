@@ -42,7 +42,7 @@ fun StepperRow(
                 valueText,
                 style = MaterialTheme.typography.titleLarge,
                 textAlign = TextAlign.Center,
-                modifier = Modifier.width(64.dp)
+                modifier = Modifier.width(112.dp)
             )
             IconButton(onClick = { onValueChange((value + step).coerceIn(minValue, maxValue)) }) {
                 Icon(Icons.Filled.Add, contentDescription = "Increase $label")

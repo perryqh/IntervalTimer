@@ -92,12 +92,9 @@ fun SettingsScreen(app: IntervalTimerApp, onBack: () -> Unit) {
             Column {
                 Text("Voice", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "The last few seconds of each interval always use a short tick tone, not voice. " +
-                        "Time checks at 60/50/40/30/20/10s remaining, and phase announcements " +
-                        "(\"work\"/\"rest\"/etc.), always use voice when Sound is on — needs recorded " +
-                        "clips named count_60.m4a … count_10.m4a and phase_work.m4a/phase_rest.m4a in " +
-                        "app/src/main/res/raw. A missing time-check clip stays silent; a missing " +
-                        "phase clip falls back to a beep.",
+                    "The last few seconds of each interval use a short tick tone. Time checks at " +
+                        "60, 50, 40, 30, 20, and 10 seconds remaining, plus work and rest announcements, " +
+                        "use voice when Sound is on. Other phases (get ready, warm up, cool down) fall back to a beep.",
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
                 )

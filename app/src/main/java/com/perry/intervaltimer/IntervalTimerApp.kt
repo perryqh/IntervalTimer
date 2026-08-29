@@ -6,6 +6,7 @@ import com.perry.intervaltimer.data.SettingsRepository
 import com.perry.intervaltimer.data.WorkoutRepository
 import com.perry.intervaltimer.timer.TimerEngine
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
@@ -15,7 +16,7 @@ import kotlinx.coroutines.launch
  */
 class IntervalTimerApp : Application() {
 
-    val applicationScope = CoroutineScope(SupervisorJob())
+    val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     lateinit var workoutRepository: WorkoutRepository
         private set
