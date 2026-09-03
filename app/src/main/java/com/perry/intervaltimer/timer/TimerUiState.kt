@@ -34,7 +34,7 @@ data class TimerUiState(
 
 /** One-shot side-effect events; consumed by [com.perry.intervaltimer.timer.CueController]. */
 sealed interface CueEvent {
-    data class Tick(val secondsRemaining: Int) : CueEvent
+    data class Tick(val secondsRemaining: Int, val phaseType: IntervalType) : CueEvent
     data class PhaseChange(val newType: IntervalType) : CueEvent
     data object Finished : CueEvent
 }
