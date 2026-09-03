@@ -5,6 +5,13 @@ nothing phoning home. Built to do what a good interval timer app does, plus the 
 them hardcode: **how many seconds before an interval ends the countdown beeps start** is a setting,
 not a constant.
 
+
+<p align="center">
+  <img src="docs/screenshot-list.png" alt="Workout list" width="280" />
+  &nbsp;&nbsp;
+  <img src="docs/screenshot-run.png" alt="Active run screen" width="280" />
+</p>
+
 ## What's in it
 
 - **Build your own interval workouts**: optional warm-up, a set of repeating steps (Work/Rest
