@@ -55,12 +55,29 @@ class MainActivity : ComponentActivity() {
                 }
 
                 val navController = rememberNavController()
-                LaunchedEffect(pendingRunWorkoutId) {
-                    val id = pendingRunWorkoutId ?: return@LaunchedEffect
-                    navController.navigate(Routes.runWorkout(id)) {
+
+                fun navigateToRun(workoutId: String) {
+                    navController.navigate(Routes.runWorkout(workoutId)) {
                         launchSingleTop = true
                         popUpTo(Routes.WORKOUT_LIST)
                     }
+                }
+
+                // Activity is singleTask and NavHost always starts on the workout list.
+                // Returning from another app (launcher / recents) often recreates the
+                // Activity with a MAIN intent that has no EXTRA_WORKOUT_ID, even though
+                // TimerEngine / TimerService still have a workout in progress. Deep-link
+                // from the notification still wins via pendingRunWorkoutId.
+                LaunchedEffect(Unit) {
+                    if (pendingRunWorkoutId != null) return@LaunchedEffect
+                    val state = app.timerEngine.uiState.value
+                    if (state.isActive && !state.isFinished && state.workoutId.isNotBlank()) {
+                        navigateToRun(state.workoutId)
+                    }
+                }
+                LaunchedEffect(pendingRunWorkoutId) {
+                    val id = pendingRunWorkoutId ?: return@LaunchedEffect
+                    navigateToRun(id)
                     pendingRunWorkoutId = null
                 }
                 AppNavHost(navController, app)

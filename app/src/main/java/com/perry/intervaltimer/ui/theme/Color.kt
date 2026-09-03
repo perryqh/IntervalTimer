@@ -6,8 +6,8 @@ import com.perry.intervaltimer.data.IntervalType
 val AccentGreen = Color(0xFF00E5A8)
 val AccentGreenDark = Color(0xFF00B387)
 
-val WorkColor = Color(0xFFFF5A5F)
-val RestColor = Color(0xFF3D8BFD)
+val WorkColor = Color(0xFF00E5A8)
+val RestColor = Color(0xFFFF5A5F)
 val WarmupColor = Color(0xFFFFC145)
 val CooldownColor = Color(0xFF8E7CFF)
 val PrepareColor = Color(0xFFAEB4BD)
