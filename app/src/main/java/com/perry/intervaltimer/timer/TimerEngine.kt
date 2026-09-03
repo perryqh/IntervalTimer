@@ -178,7 +178,7 @@ class TimerEngine(
                     remainingSeconds > settings.countdownLeadSeconds &&
                     remainingSeconds != stepDurationSeconds)
             ) {
-                _cueEvents.tryEmit(CueEvent.Tick(remainingSeconds))
+                _cueEvents.tryEmit(CueEvent.Tick(remainingSeconds, steps[currentIndex].type))
             }
         }
 
